@@ -9,21 +9,21 @@ def trigger(trig):
     if trig in ("online", "onlineSwim"):
         return "online"
     elif trig in ("button", "buttonSwim"):
-        return "de knop"
+        return "the button"
     elif trig in ("watch", "watchSwim"):
         return "Watch"
     elif trig == "timer":
-        return "de timer"
+        return "the timer"
     elif trig == "heatpump":
-        return "de verwarming"
+        return "the heating"
     elif trig == "heated_timer":
-        return "de verwarmde timer"
+        return "the heating"
     elif trig == "schedule":
-        return "het schema"
+        return "the schedule"
     elif trig == "solar":
-        return "de zon"
+        return "the sun"
     elif trig == "reset":
-        return "automatische modus"
+        return "automatic mode"
 
 def get_schedule_round():
     now_dt = datetime.datetime.now()
@@ -37,7 +37,7 @@ def get_schedule_round():
         return 2
 
 def state(state):
-    return "aan" if state == "on" else "uit"
+    return "On" if state == "on" else "Off"
 
 if domain == "Pump":
     old_state = data.get("old_state", "")
@@ -54,34 +54,34 @@ if domain == "Pump":
         if old_trigger == "solar" and new_trigger == "schedule":
             round = get_schedule_round()
             if round == 0:
-                message = "Pomp begint met de eerste pompronde"
+                message = "Pump starts with the first pumping round"
             elif round == 1:
-                message = "Pomp gaat verder met de eerste pompronde"
+                message = "Pump continues with the first pumping round"
             elif round == 2:
-                message = "Pomp gaat verder met de tweede pompronde"
+                message = "Pump continues with the second pumping round"
         elif old_trigger == "schedule" and new_trigger == "solar":
             if get_schedule_round() == 1:
-                message = "Eerste pompronde voltooid, gaat verder op de zon"
+                message = "First round of pumping completed, continues on the sun"
             else:
-                message = "Dagelijks schema is voltooid, gaat verder op de zon"
+                message = "Daily schedule is completed, continues on the sun"
         #elif old_trigger in manual and new_trigger == "schedule":
         #    if get_schedule_round() == 1:
-        #        message = "Handmatig is gereset, gaat verder met eerste pompronde"
+        #        message = "Manual has been reset, continues with first pumping round"
         #    else:
-        #        message = "Handmatig is gereset, gaat verder met tweede pompronde"
+        #        message = "Manual has been reset, continues with second pumping round"
         elif new_trigger == "schedule":
             round = get_schedule_round()
             if round == 0:
                 end = str(hass.states.get("input_datetime.pool_schedule_end").state)[0:5]
-                message = "Pomp is gewijzigd van " + trigger(old_trigger) + " naar schema en begint met de eerste pompronde met eindtijd " + end + "."
+                message = "Pump has been changed from " + trigger(old_trigger) + " according to schedule and starts with the first pumping round with end time " + end + "."
             elif round == 1:
                 end = str(hass.states.get("input_datetime.pool_schedule_end").state)[0:5]
-                message = "Pomp is gewijzigd van " + trigger(old_trigger) + " naar schema en gaat verder met de eerste pompronde met eindtijd " + end + "."
+                message = "Pump has been changed from " + trigger(old_trigger) + " according to schedule and continues with the first pumping round with end time " + end + "."
             elif round == 2:
                 end = str(hass.states.get("input_datetime.pool_schedule_last_cycle_end").state)[0:5]
-                message = "Pomp is gewijzigd van " + trigger(old_trigger) + " naar schema en gaat verder met de tweede pompronde met eindtijd " + end + "."
+                message = "Pump has been changed from " + trigger(old_trigger) + " according to schedule and continues with the second pumping round with end time " + end + "."
         else:
-            message = "Pomp is gewijzigd van " + trigger(old_trigger) + " naar " + trigger(new_trigger) + ", blijft " + state(new_state)
+            message = "Pump has been changed from " + trigger(old_trigger) + " Unpleasant " + trigger(new_trigger) + ", stays " + state(new_state)
         send = True
     elif old_state != new_state:
         # new state
@@ -90,22 +90,22 @@ if domain == "Pump":
                 end = str(hass.states.get("input_datetime.pool_schedule_end").state)[0:5]
                 round = get_schedule_round()
                 if round == 0:
-                    message = "Pomp begint met de eerste pompronde met eindtijd " + end
+                    message = "Pump starts with the first pump round with end time " + end
                 elif round == 1:
-                    message = "Pomp gaat verder met de eerste pompronde met eindtijd " + end
+                    message = "Pump continues with the first pump round with end time " + end
                 elif round == 2:
                     end = str(hass.states.get("input_datetime.pool_schedule_last_cycle_end").state)[0:5]
-                    message = "Pomp is ingeschakeld voor tweede pompronde met eindtijd " + end
+                    message = "Pump is switched on for second pump round with end time " + end
             elif new_trigger == "solar":
                 power = hass.states.get("sensor.util_power_solar_average").state
-                message = "Pomp is ingeschakeld door de zon (" + power + "W)"
+                message = "Pump is turned on by the sun (" + power + "W)"
             elif new_trigger == "timer":
                 end = str(hass.states.get("input_datetime.pool_timer_end").state)[10:16]
-                message = "Pomp is ingeschakeld door de timer die eindigt om " + end + "."
+                message = "Pump is turned on by the timer which ends at " + end + "."
             else:
-                message = "Pomp is ingeschakeld door " + trigger(new_trigger)
+                message = "Pump is switched on by " + trigger(new_trigger)
         elif new_state == "off":
-            message = "Pomp is uitgeschakeld door " + trigger(new_trigger)
+            message = "Pump has been switched off by " + trigger(new_trigger)
         send = True
     else:
         # do nothing

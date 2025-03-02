@@ -11,10 +11,11 @@ template:
       device_class: timestamp
       state: "{{ as_datetime(states('input_datetime.pool_backwash_last')).astimezone() + timedelta(days= states('input_number.pool_backwash_interval') | float(0)) }}"
 
+
     #-----------------------TEMPLATE POOL-----------------------
     - name: pool_pump_remaining_time
       availability: "{{ (states('sensor.pool_pump_time_on') | float(-1)) >= 0 }}"
-      # friendly_name: Resterende pomptijd
+      # friendly_name: Remaining pumping time
       unique_id: "pool_pump_remaining_time"
       state: >-
             {% set time = (((states('input_number.pool_pump_duration_lower_threshold') | float(0))*60 - (states('sensor.pool_pump_time_on')|float(-1))*3600)| round | int, 0)|max %}
@@ -35,7 +36,7 @@ template:
         seconds: "{{ (((states('input_number.pool_pump_duration_lower_threshold') | float(-1))*60 - (states('sensor.pool_pump_time_on')|float(-1))*3600)| round, 0)|max }}"
     - name: pool_pump_time
       availability: "{{ (states('sensor.pool_pump_time_on') | float(-1)) >= 0 }}"
-      # friendly_name: Pomptijd vandaag
+      # friendly_name: Pumping time today
       unique_id: "pool_pump_time_today"
       state: >-
             {% set time = ((states('sensor.pool_pump_time_on') | float(-1))*3600) | round %}
@@ -56,7 +57,7 @@ template:
         minutes: "{{ ((states('sensor.pool_pump_time_on') | float(0))*60) | round }}"
     - name: pool_last_state_change
       unique_id: "pool_last_state_change"
-      # friendly_name: Laatste pompstaat wijziging
+      # friendly_name: Last pump state change
       state: >-
             {% set state = states('input_select.pool_pump_trigger') %}
             {%- if state in ('button', 'buttonSwim') -%}
@@ -104,14 +105,14 @@ template:
                 mdi:solar-panel
             {%- endif -%}
     - name: pool_pump_block
-      # friendly_name: Pomp modus
+      # friendly_name: Pump mode
       unique_id: "pool_pump_block"
       availability: "{{ (states('input_number.pool_pump_priority') | int(-1)) >= 0 }}"
       state: >-
           {% if states('input_number.pool_pump_priority') | int <= 5 %}
-            Handmatig
+            Manually
           {% else %}
-            Automatisch
+            Automatic
           {% endif %}
       icon: >-
           {%- if states('input_number.pool_pump_priority') | int <= 5 -%} 

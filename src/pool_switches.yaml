@@ -40,7 +40,7 @@ switch:
             command: on
             trigger: online
       pool_pump_block:
-        friendly_name: Pomp geblokkeerd
+        friendly_name: Pump block
         value_template: "{{ states('input_number.pool_pump_priority') | int <= 5 }}"
         icon_template: >-
           {%- if states('input_select.pool_pump_trigger') in ('online', 'onlineSwim') -%} 
@@ -67,7 +67,7 @@ switch:
           data:
             command: reset
       pool_heatpump:
-        friendly_name: Pool Warmtepomp
+        friendly_name: Pool Heat Pump
         value_template: "{{ states('switch.pool_heatpump_climate') }}"
         icon_template: "mdi:radiator"
         turn_on:
@@ -79,7 +79,7 @@ switch:
           target:
             entity_id: automation.pool_heatpump_off
       pool_heatpump_climate:
-        friendly_name: Pool Warmtepomp climate
+        friendly_name: Pool Heat Pump climate
         value_template: "{{ states('input_boolean.pool_heatpump_state_climate') }}"
         icon_template: "mdi:radiator"
         turn_on:
@@ -93,7 +93,7 @@ switch:
       pool_swim_active:
         value_template: "{{ states('input_select.pool_pump_trigger') in ('onlineSwim', 'buttonSwim', 'watchSwim') }}"
         icon_template: "mdi:pool"
-        friendly_name: Zwembad
+        friendly_name: Swimming pool
         turn_on:
           service: python_script.pool_pump_commands
           data:
