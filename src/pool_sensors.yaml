@@ -1,21 +1,27 @@
+
 template:
   - sensor:
-    - name: Pool water height
+    - name: "Pool water height"
       unique_id: pool_water_height
       unit_of_measurement: cm
       state_class: measurement
       state: "{{ 115 - states('input_number.pool_water_height_edge') | float(0) }}"
       availability: "{{ states('input_number.pool_water_height_edge') | float(-1) >= 0 }}"
-    - name: Pool backwash next
+    
+    - name: "Pool backwash next"
       unique_id: pool_backwash_next
       device_class: timestamp
-      state: "{{ as_datetime(states('input_datetime.pool_backwash_last')).astimezone() + timedelta(days= states('input_number.pool_backwash_interval') | float(0)) }}"
+      state: >-
+        {% set last_backwash = states('input_datetime.pool_backwash_last') %}
+        {% set last_backwash_date = as_datetime(last_backwash) if last_backwash else none %}
+        {% if last_backwash_date %}
+          {{ last_backwash_date.astimezone() + timedelta(days=states('input_number.pool_backwash_interval') | float(0)) }}
+        {% else %}
+          {{ none }}
+        {% endif %}
 
-
-    #-----------------------TEMPLATE POOL-----------------------
-    - name: pool_pump_remaining_time
+    - name: "pool_pump_remaining_time"
       availability: "{{ (states('sensor.pool_pump_time_on') | float(-1)) >= 0 }}"
-      # friendly_name: Remaining pumping time
       unique_id: "pool_pump_remaining_time"
       state: >-
             {% set time = (((states('input_number.pool_pump_duration_lower_threshold') | float(0))*60 - (states('sensor.pool_pump_time_on')|float(-1))*3600)| round | int, 0)|max %}
@@ -34,9 +40,9 @@ template:
             {%- endif -%}
       attributes: 
         seconds: "{{ (((states('input_number.pool_pump_duration_lower_threshold') | float(-1))*60 - (states('sensor.pool_pump_time_on')|float(-1))*3600)| round, 0)|max }}"
-    - name: pool_pump_time
+    
+    - name: "pool_pump_time"
       availability: "{{ (states('sensor.pool_pump_time_on') | float(-1)) >= 0 }}"
-      # friendly_name: Pumping time today
       unique_id: "pool_pump_time_today"
       state: >-
             {% set time = ((states('sensor.pool_pump_time_on') | float(-1))*3600) | round %}
@@ -55,9 +61,9 @@ template:
             {%- endif -%}
       attributes:
         minutes: "{{ ((states('sensor.pool_pump_time_on') | float(0))*60) | round }}"
-    - name: pool_last_state_change
+    
+    - name: "pool_last_state_change"
       unique_id: "pool_last_state_change"
-      # friendly_name: Last pump state change
       state: >-
             {% set state = states('input_select.pool_pump_trigger') %}
             {%- if state in ('button', 'buttonSwim') -%}
@@ -104,8 +110,8 @@ template:
             {%- elif state == 'solar' -%}
                 mdi:solar-panel
             {%- endif -%}
-    - name: pool_pump_block
-      # friendly_name: Pump mode
+    
+    - name: "pool_pump_block"
       unique_id: "pool_pump_block"
       availability: "{{ (states('input_number.pool_pump_priority') | int(-1)) >= 0 }}"
       state: >-
@@ -120,13 +126,41 @@ template:
           {%- else -%} 
             mdi:sync
           {%- endif -%}
+  
   - binary_sensor:
-    - name: Pool backwash needed
+    - name: "Pool backwash needed"
       unique_id: pool_backwash_needed
-      state: "{{ (now() - as_datetime(states('input_datetime.pool_backwash_last')).astimezone()).days >= states('input_number.pool_backwash_interval') | float(0) }}"
-      
+      state: >-
+        {% set last_backwash = states('input_datetime.pool_backwash_last') %}
+        {% set last_backwash_date = as_datetime(last_backwash) if last_backwash else none %}
+        {% if last_backwash_date %}
+          {{ (now() - last_backwash_date.astimezone()).days >= states('input_number.pool_backwash_interval') | float(0) }}
+        {% else %}
+          {{ false }}
+        {% endif %}
+    
+    - name: "pool_schedule_first_active"
+      state: "{{ states('input_datetime.pool_schedule_end') > now().strftime('%H:%M:%S') >= states('input_datetime.pool_schedule_start') }}"
+    
+    - name: "pool_schedule_last_active"
+      state: "{{ now().strftime('%H:%M:%S') >= states('input_datetime.pool_schedule_last_cycle_start') and state_attr('sensor.pool_pump_remaining_time','seconds') > 60 }}"
+    
+    - name: "pool_schedule_active"
+      state: "{{ is_state('binary_sensor.pool_schedule_first_active', 'on') or is_state('binary_sensor.pool_schedule_last_active', 'on') }}"
+    
+    - name: "pool_solar_active"
+      state: "{{ (states('sensor.util_power_solar_average') | float(0)) > (states('input_number.pool_solar_limit') | float(0)) and state_attr('sun.sun', 'azimuth') < float(states('input_number.pool_solar_azim_upper_threshold')) }}"
+    
+    - name: "pool_active"
+      state: "{{ is_state('switch.pool_pump_relay','on') or (is_state('switch.pool_pump_relay','off') and states('input_number.pool_pump_priority')|float in (1.0, 5.0)) }}"
+    
+    - name: "pool_after_timer_active"
+      state: "{{ is_state('input_boolean.pool_after_timer_active', 'on') and state_attr('input_datetime.pool_after_timer_end', 'timestamp') > now().timestamp() }}"
+    
+    - name: "pool_timer_active"
+      state: "{{ is_state('input_boolean.pool_timer_active', 'on') and state_attr('input_datetime.pool_timer_end', 'timestamp') > now().timestamp() >= state_attr('input_datetime.pool_timer_start', 'timestamp') }}"
+
 sensor:
-  #-----------------------HISTORY_STATS POOL-----------------------
   - platform: history_stats
     name: Pool Pump time on
     entity_id: switch.pool_pump_relay
@@ -135,21 +169,3 @@ sensor:
     start: '{{ now().replace(hour=0, minute=0, second=0) }}'
     duration:
       hours: 24
-
-binary_sensor:
-  - platform: template
-    sensors:
-      pool_schedule_first_active:
-        value_template: "{{ states('input_datetime.pool_schedule_end') > now().strftime('%H:%M:%S') >= states('input_datetime.pool_schedule_start') }}"
-      pool_schedule_last_active:
-        value_template: "{{ now().strftime('%H:%M:%S') >= states('input_datetime.pool_schedule_last_cycle_start') and state_attr('sensor.pool_pump_remaining_time','seconds') > 60 }}"
-      pool_schedule_active:
-        value_template: "{{ is_state('binary_sensor.pool_schedule_first_active', 'on') or is_state('binary_sensor.pool_schedule_last_active', 'on') }}"
-      pool_solar_active:
-        value_template: "{{ (states('sensor.util_power_solar_average') | float(0)) > (states('input_number.pool_solar_limit') | float(0)) and state_attr('sun.sun', 'azimuth') < float(states('input_number.pool_solar_azim_upper_threshold')) }}"
-      pool_active:
-        value_template: "{{ is_state('switch.pool_pump_relay','on') or (is_state('switch.pool_pump_relay','off') and states('input_number.pool_pump_priority')|float in (1.0, 5.0)) }}"
-      pool_after_timer_active:
-        value_template: "{{ is_state('input_boolean.pool_after_timer_active', 'on') and state_attr('input_datetime.pool_after_timer_end', 'timestamp') > now().timestamp() }}"
-      pool_timer_active:
-        value_template: "{{ is_state('input_boolean.pool_timer_active', 'on') and state_attr('input_datetime.pool_timer_end', 'timestamp') > now().timestamp() >= state_attr('input_datetime.pool_timer_start', 'timestamp') }}"

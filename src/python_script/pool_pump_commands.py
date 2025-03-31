@@ -1,14 +1,31 @@
+"""
+Pool Pump Control Script for Home Assistant
+Manages the pool pump based on different triggers with priority handling
+"""
+import datetime
+import logging
+
+# Get input data
 command = data.get("command", "")
 trigger = data.get("trigger", "")
 
+# Set up logger
+logger = logging.getLogger(__name__)
+
 def get_priority(trigger):
-    priorities ={
+    """
+    Get priority level for a given trigger
+    Lower number = higher priority
+    """
+    priorities = {
+        # Priority 1: Manual controls
         "online": 1, 
         "button": 1, 
         "watch": 1,
         "onlineSwim": 1, 
         "buttonSwim": 1, 
         "watchSwim": 1,
+        # Other priorities
         "heated_timer": 2,
         "heatpump": 3,
         "after_timer": 4,
@@ -17,120 +34,270 @@ def get_priority(trigger):
         "solar": 7,
         "reset": 8
     }
-    return priorities[trigger]
+    return priorities.get(trigger, 9)  # Default to lowest priority if not found
+
+def format_datetime(dt):
+    """Format datetime for Home Assistant input_datetime"""
+    return f"{dt.year}-{dt.month:02d}-{dt.day:02d} {dt.hour:02d}:{dt.minute:02d}:{dt.second:02d}"
 
 def pump(command, trigger, recover=False, after_timer=False):
+    """
+    Control the pool pump based on commands and triggers
+    
+    Args:
+        command: "on", "off", or "recover"
+        trigger: The source of the command
+        recover: Whether this is a recovery operation
+        after_timer: Whether this is after a timer
+    """
+    # Get current states
     old_trigger = hass.states.get("input_select.pool_pump_trigger").state
     old_state = hass.states.get("switch.pool_pump_relay").state
-
+    
+    # Standard commands (on/off)
     if command in ["on", "off"]:
-        # trigger should have higher priority, otherwise send notification
+        # Calculate priorities and restrictions
         priority = get_priority(trigger)
-        old_priority = float(hass.states.get("input_number.pool_pump_priority").state) 
-
-        time_on = float(hass.states.get("sensor.pool_pump_time_on").state)*60
+        old_priority = float(hass.states.get("input_number.pool_pump_priority").state)
+        
+        # Check time restrictions
+        time_on = float(hass.states.get("sensor.pool_pump_time_on").state) * 60
         max_time = float(hass.states.get("input_number.pool_pump_duration_upper_threshold").state)
         time_restricted = (time_on >= max_time) and trigger in ("schedule", "solar")
         
+        # Process command if higher priority or recovery mode and not time restricted
         if (priority <= old_priority or recover) and not time_restricted:
-            # update trigger and priority
-            hass.services.call("input_number", "set_value", service_data={"entity_id":"input_number.pool_pump_priority", "value": priority})
-            hass.services.call("input_select", "select_option", service_data={"entity_id": "input_select.pool_pump_trigger", "option": trigger})
+            # Update trigger and priority
+            hass.services.call(
+                "input_number", 
+                "set_value", 
+                {"entity_id": "input_number.pool_pump_priority", "value": priority}
+            )
+            hass.services.call(
+                "input_select", 
+                "select_option", 
+                {"entity_id": "input_select.pool_pump_trigger", "option": trigger}
+            )
             
-            # set current state of filter pump and notify
-            hass.services.call("switch", "turn_" + command, {"entity_id": "switch.pool_pump_relay"})
-            hass.services.call("python_script", "pool_notify", {"domain": "Pump", "old_state": old_state, "new_state": command , "old_trigger": old_trigger, "new_trigger": trigger })
+            # Set pool pump state
+            hass.services.call(
+                "switch", 
+                f"turn_{command}", 
+                {"entity_id": "switch.pool_pump_relay"}
+            )
             
-            # set current state of heatpump (either set it on if heated_timer or heatpump is active, or if switched from heated_timer/heatpump towards priority 1)
-            cmd_heatpump = "on" if command == "on" and trigger in ("heated_timer", "heatpump") or (priority == 1 and old_trigger in ("heated_timer", "heatpump")) else "off"
-            hass.services.call("switch", "turn_" + cmd_heatpump, {"entity_id": "switch.pool_heatpump_climate"})
+            # Send notification
+            hass.services.call(
+                "python_script", 
+                "pool_notify", 
+                {
+                    "domain": "Pump", 
+                    "old_state": old_state, 
+                    "new_state": command, 
+                    "old_trigger": old_trigger, 
+                    "new_trigger": trigger
+                }
+            )
             
-            # set after timer
-            after_timer_planned = "on" if command == "on" and trigger in ("onlineSwim", "buttonSwim", "watchSwim", "heatpump", "heated_timer") else "off"
+            # Control heat pump
+            is_heating_trigger = trigger in ("heated_timer", "heatpump")
+            was_heating_trigger = old_trigger in ("heated_timer", "heatpump")
+            cmd_heatpump = "on" if (command == "on" and is_heating_trigger) or (priority == 1 and was_heating_trigger) else "off"
+            
+            hass.services.call(
+                "switch", 
+                f"turn_{cmd_heatpump}", 
+                {"entity_id": "switch.pool_heatpump_climate"}
+            )
+            
+            # Handle after timer settings
+            swimming_triggers = ["onlineSwim", "buttonSwim", "watchSwim"]
+            heating_triggers = ["heatpump", "heated_timer"]
+            after_timer_planned = "on" if command == "on" and (trigger in swimming_triggers or trigger in heating_triggers) else "off"
             after_timer_state = "on" if trigger == "after_timer" else "off"
-            hass.services.call("input_boolean", "turn_" + after_timer_planned, {"entity_id": "input_boolean.pool_after_timer_planned"})
-            hass.services.call("input_boolean", "turn_" + after_timer_state, {"entity_id": "input_boolean.pool_after_timer_active"})
+            
+            hass.services.call(
+                "input_boolean", 
+                f"turn_{after_timer_planned}", 
+                {"entity_id": "input_boolean.pool_after_timer_planned"}
+            )
+            hass.services.call(
+                "input_boolean", 
+                f"turn_{after_timer_state}", 
+                {"entity_id": "input_boolean.pool_after_timer_active"}
+            )
+            
         elif time_restricted:
-            hass.services.call("input_number", "set_value", service_data={"entity_id":"input_number.pool_pump_priority", "value": 8})
-            hass.services.call("input_select", "select_option", service_data={"entity_id": "input_select.pool_pump_trigger", "option": "reset"})
-            hass.services.call("switch", "turn_off", {"entity_id": "switch.pool_pump_relay"})
-            hass.services.call("switch", "turn_off", {"entity_id": "switch.pool_heatpump_climate"})
-            data = {
+            # Time limit reached, reset and turn off
+            hass.services.call(
+                "input_number", 
+                "set_value", 
+                {"entity_id": "input_number.pool_pump_priority", "value": 8}
+            )
+            hass.services.call(
+                "input_select", 
+                "select_option", 
+                {"entity_id": "input_select.pool_pump_trigger", "option": "reset"}
+            )
+            hass.services.call(
+                "switch", 
+                "turn_off", 
+                {"entity_id": "switch.pool_pump_relay"}
+            )
+            hass.services.call(
+                "switch", 
+                "turn_off", 
+                {"entity_id": "switch.pool_heatpump_climate"}
+            )
+            
+            # Send notification about time limit
+            notification_data = {
                 "title": "Pool",
-                "message": "Pomp trigger " + trigger + "  genegeerd vanwege tijdslimiet, pomp gaat uit."
+                "message": f"Pomp trigger {trigger} genegeerd vanwege tijdslimiet, pomp gaat uit."
             }
-            hass.services.call("notify", "mobile_app_iphone_van_wesley", service_data=data)
+            hass.services.call(
+                "notify", 
+                "mobile_app_iphone_van_wesley", 
+                service_data=notification_data
+            )
+            
         elif command != old_state:
-            data = {
+            # Lower priority command is ignored, but offer override
+            notification_data = {
                 "title": "Pool",
-                "message": "Pomp trigger " + trigger + " met lagere prioriteit genegeerd vanwege " + old_trigger + " wil je dit overbruggen?",
-                "data":{"push": {"category": "PUMP_OVERRIDE"}}
+                "message": f"Pomp trigger {trigger} met lagere prioriteit genegeerd vanwege {old_trigger}, wil je dit overbruggen?",
+                "data": {"push": {"category": "PUMP_OVERRIDE"}}
             }
-            hass.services.call("notify", "mobile_app_iphone_van_wesley", service_data=data)
-        
+            hass.services.call(
+                "notify", 
+                "mobile_app_iphone_van_wesley", 
+                service_data=notification_data
+            )
+    
     elif command == "recover":
-        # check if pump has to be kept on or should but put off after ending a specific trigger
+        # Recovery logic - determine what state the pump should be in
         priority = float(hass.states.get("input_number.pool_pump_priority").state)
-        
         now = datetime.datetime.now()
-        start_schedule = datetime.datetime.strptime(hass.states.get("input_datetime.pool_schedule_start").state, "%H:%M:%S").replace(day=now.day, month=now.month, year=now.year)
-        start_last = datetime.datetime.strptime(hass.states.get("input_datetime.pool_schedule_last_cycle_start").state, "%H:%M:%S").replace(day=now.day, month=now.month, year=now.year)
-        end_schedule = datetime.datetime.strptime(hass.states.get("input_datetime.pool_schedule_end").state, "%H:%M:%S").replace(day=now.day, month=now.month, year=now.year)
+        
+        # Get schedule times
+        start_schedule = datetime.datetime.strptime(
+            hass.states.get("input_datetime.pool_schedule_start").state, 
+            "%H:%M:%S"
+        ).replace(day=now.day, month=now.month, year=now.year)
+        
+        start_last = datetime.datetime.strptime(
+            hass.states.get("input_datetime.pool_schedule_last_cycle_start").state, 
+            "%H:%M:%S"
+        ).replace(day=now.day, month=now.month, year=now.year)
+        
+        end_schedule = datetime.datetime.strptime(
+            hass.states.get("input_datetime.pool_schedule_end").state, 
+            "%H:%M:%S"
+        ).replace(day=now.day, month=now.month, year=now.year)
+        
         remaining = int(hass.states.get("sensor.pool_pump_remaining_time").attributes['seconds'])
         
-        # manual triggers
+        # Check conditions in priority order
         if priority == 1.0 and trigger != "reset":
-            # manually switched on, keep it
+            # Manually switched on, keep it
             pass
-        elif hass.states.is_state("input_boolean.pool_timer_heat", "on") and hass.states.is_state("binary_sensor.pool_timer_active", "on"):
-            # heated_timer is active
-            hass.services.call("input_boolean", "turn_on", service_data={"entity_id": "input_boolean.pool_timer_state"})
+            
+        elif (hass.states.is_state("input_boolean.pool_timer_heat", "on") and 
+              hass.states.is_state("binary_sensor.pool_timer_active", "on")):
+            # Heated timer is active
+            hass.services.call(
+                "input_boolean", 
+                "turn_on", 
+                {"entity_id": "input_boolean.pool_timer_state"}
+            )
             pump_call("on", "heated_timer", old_trigger)
-        elif hass.states.is_state("switch.pool_heatpump_climate", "on") and old_trigger != "heated_timer": 
-            # if old trigger was heated_timer and new one is not heated_timer (already skipped), then heatpump is switched off and will be set later on (in pump_call)
-            # heatpump is on, pump has to be as well
+            
+        elif (hass.states.is_state("switch.pool_heatpump_climate", "on") and 
+              old_trigger != "heated_timer"):
+            # Heat pump is on, pump needs to be on too
             pump_call("on", "heatpump", old_trigger)
-        elif hass.states.is_state("binary_sensor.pool_after_timer_active", "on") or after_timer:
-            # after timer is active
+            
+        elif (hass.states.is_state("binary_sensor.pool_after_timer_active", "on") or 
+              after_timer):
+            # After timer is active
             pump_call("on", "after_timer", old_trigger)
+            
         elif hass.states.is_state("input_boolean.pool_after_timer_planned", "on"):
-            # after timer is planned, calculate end time of pool_after_timer_end
+            # After timer is planned - calculate and set end time
             duration = float(hass.states.get("input_number.pool_after_timer_duration").state)
-            end = (now + datetime.timedelta(minutes=duration))
-            hass.services.call("input_datetime", "set_datetime", service_data = {"entity_id": "input_datetime.pool_after_timer_end", "datetime": "{}-{}-{} {}:{}:{}".format(end.year, ("0" if end.month < 10 else "") + str(end.month), ("0" if end.day < 10 else "") + str(end.day), end.hour, end.minute, end.second)})
-            hass.services.call("input_boolean", "turn_off", {"entity_id": "input_boolean.pool_after_timer_planned"})
-            hass.services.call("input_boolean", "turn_on", {"entity_id": "input_boolean.pool_after_timer_active"})
-            pump("recover", "after_timer" if trigger != "reset" else "reset", after_timer=True)
+            end_time = now + datetime.timedelta(minutes=duration)
+            
+            hass.services.call(
+                "input_datetime", 
+                "set_datetime", 
+                {
+                    "entity_id": "input_datetime.pool_after_timer_end", 
+                    "datetime": format_datetime(end_time)
+                }
+            )
+            
+            # Update after timer states
+            hass.services.call(
+                "input_boolean", 
+                "turn_off", 
+                {"entity_id": "input_boolean.pool_after_timer_planned"}
+            )
+            hass.services.call(
+                "input_boolean", 
+                "turn_on", 
+                {"entity_id": "input_boolean.pool_after_timer_active"}
+            )
+            
+            # Set after timer
+            new_trigger = "after_timer" if trigger != "reset" else "reset"
+            pump("recover", new_trigger, after_timer=True)
+            
         elif hass.states.is_state("binary_sensor.pool_timer_active", "on"):
-            # timed schedule is active
+            # Timed schedule is active
             state = "on" if hass.states.is_state("input_boolean.pool_timer_state", "on") else "off"
             pump_call(state, "timer", old_trigger)
             
-        # entering automatic triggers
-        elif start_schedule <= now and now < end_schedule:
-            # first round of schedule
+        elif start_schedule <= now < end_schedule:
+            # First round of schedule
             pump_call("on", "schedule", old_trigger)
+            
         elif now >= start_last and remaining > 60:
-            # second (optional) round of schedule
+            # Second (optional) round of schedule
             pump_call("on", "schedule", old_trigger)
-            end = (now + datetime.timedelta(seconds=remaining))
-            hass.services.call("input_datetime", "set_datetime", service_data = {"entity_id": "input_datetime.pool_schedule_last_cycle_end", "time": "{}:{}:{}".format(end.hour, end.minute, end.second)})
+            end_time = now + datetime.timedelta(seconds=remaining)
+            
+            hass.services.call(
+                "input_datetime", 
+                "set_datetime", 
+                {
+                    "entity_id": "input_datetime.pool_schedule_last_cycle_end", 
+                    "time": f"{end_time.hour:02d}:{end_time.minute:02d}:{end_time.second:02d}"
+                }
+            )
+            
         elif hass.states.is_state("binary_sensor.pool_solar_active", "on"):
-        #elif float(hass.states.get("sensor.util_power_solar_average").state) >= float(hass.states.get("input_number.pool_solar_limit").state):
-            # solar
+            # Solar power available
             pump_call("on", "solar", old_trigger)
+            
         else:
-            # nothing should put the pump on, send put off command
+            # No active conditions, turn off the pump
             pump_call("off", "reset", old_trigger)
+            
     else:
-        logger.warning("Command not found")
+        # Invalid command
+        logger.warning(f"Command not recognized: {command}")
 
 def pump_call(command, trigger, old_trigger):
-    time_on = float(hass.states.get("sensor.pool_pump_time_on").state)*60
+    """Helper function to call pump with proper parameters"""
+    # Check time restrictions
+    time_on = float(hass.states.get("sensor.pool_pump_time_on").state) * 60
     max_time = float(hass.states.get("input_number.pool_pump_duration_upper_threshold").state)
     time_restricted = (time_on >= max_time) and trigger in ("schedule", "solar")
+    current_state = hass.states.get("switch.pool_pump_relay").state
     
-    if time_restricted or old_trigger != trigger or command != hass.states.get("switch.pool_pump_relay").state:
+    # Only call pump if state changes or restrictions apply
+    if time_restricted or old_trigger != trigger or command != current_state:
         pump(command, trigger, recover=True)
-        
+
+# Execute the command
 pump(command, trigger)

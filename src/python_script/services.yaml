@@ -13,7 +13,6 @@ pool_pump_commands:
             - "on"
             - "off"
             - recover
-      
     trigger:
       name: Trigger
       description: Trigger for the change
@@ -34,7 +33,7 @@ pool_pump_commands:
             - onlineSwim
             - buttonSwim
             - watchSwim
-  
+
 pool_notify:
   name: Pool Notifications
   description: Sends notifications about pool to user
